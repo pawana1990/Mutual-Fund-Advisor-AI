@@ -1,0 +1,58 @@
+[project]
+name = "ai-wealth-advisor-api"
+version = "0.1.0"
+description = "AI Wealth Advisor backend — FastAPI + LangGraph multi-agent portfolio intelligence"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "pydantic==2.10.4",
+    "pydantic-settings==2.7.1",
+    "sqlalchemy[asyncio]==2.0.36",
+    "asyncpg==0.30.0",
+    "alembic==1.14.0",
+    "psycopg2-binary==2.9.10",
+    "pgvector==0.3.6",
+    "redis==5.2.1",
+    "celery==5.4.0",
+    "langgraph>=0.2.60,<2.0",
+    "langchain-core>=0.3.28,<1.0",
+    "langchain-openai>=0.2.14,<1.0",
+    "openai>=1.58.1,<2.0",
+    "numpy==2.2.1",
+    "numpy-financial==1.0.0",
+    "pandas==2.2.3",
+    "openpyxl==3.1.5",
+    "pdfplumber==0.11.4",
+    "python-jose[cryptography]==3.3.0",
+    "python-multipart==0.0.20",
+    "boto3==1.35.90",
+    "httpx==0.28.1",
+    "structlog==24.4.0",
+    "tenacity==9.0.0",
+    "reportlab==4.2.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-asyncio==0.25.0",
+    "pytest-cov==6.0.0",
+    "hypothesis==6.123.2",
+    "ruff==0.8.4",
+    "mypy==1.14.0",
+    "bandit==1.8.0",
+    "httpx==0.28.1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["app/tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true

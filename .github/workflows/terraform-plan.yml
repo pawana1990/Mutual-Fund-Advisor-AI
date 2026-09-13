@@ -1,0 +1,80 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/terraform-plan.yml"
+
+permissions:
+  id-token: write # OIDC federation to AWS — no long-lived keys in secrets
+  contents: read
+  pull-requests: write # to post the plan as a PR comment
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, prod]
+    defaults:
+      run:
+        working-directory: infra/terraform/environments/${{ matrix.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive ../../
+
+      - uses: terraform-linters/setup-tflint@v4
+      - name: TFLint
+        run: |
+          tflint --init
+          tflint --recursive
+
+      - name: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: infra/terraform
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Terraform init
+        run: terraform init -backend-config=backend.hcl
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        id: plan
+        run: terraform plan -no-color -out=tfplan.binary
+        continue-on-error: true
+
+      - name: Post plan to PR
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const output = `#### Terraform Plan — \`${{ matrix.environment }}\`
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+            `;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output,
+            });
+
+      - name: Fail if plan errored
+        if: steps.plan.outcome == 'failure'
+        run: exit 1

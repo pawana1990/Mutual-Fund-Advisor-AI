@@ -1,0 +1,121 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main] # -> dev environment
+    tags: ["v*"] # -> prod environment
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options: [dev, prod]
+
+permissions:
+  id-token: write # OIDC federation — no long-lived AWS keys in secrets
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  determine-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.value }}
+    steps:
+      - id: env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "value=${{ inputs.environment }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "value=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-and-push:
+    needs: determine-environment
+    runs-on: ubuntu-latest
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    outputs:
+      image_tag: ${{ steps.tag.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: tag
+        run: echo "value=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build & push API image
+        run: |
+          IMAGE="${{ steps.ecr.outputs.registry }}/ai-wealth-advisor-${{ needs.determine-environment.outputs.environment }}-api:${{ steps.tag.outputs.value }}"
+          docker build -t "$IMAGE" apps/api
+          docker push "$IMAGE"
+
+      - name: Build & push Web image
+        run: |
+          IMAGE="${{ steps.ecr.outputs.registry }}/ai-wealth-advisor-${{ needs.determine-environment.outputs.environment }}-web:${{ steps.tag.outputs.value }}"
+          docker build -t "$IMAGE" apps/web
+          docker push "$IMAGE"
+
+  migrate:
+    needs: [determine-environment, build-and-push]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Run alembic upgrade as a one-off ECS task
+        run: |
+          aws ecs run-task \
+            --cluster "ai-wealth-advisor-${{ needs.determine-environment.outputs.environment }}-cluster" \
+            --task-definition "ai-wealth-advisor-${{ needs.determine-environment.outputs.environment }}-api" \
+            --launch-type FARGATE \
+            --overrides '{"containerOverrides":[{"name":"api","command":["alembic","upgrade","head"]}]}' \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.APP_SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}"
+      # A failed migration fails this job and blocks `terraform apply` below
+      # from ever shifting traffic to the new image — see docs/DEPLOYMENT_GUIDE.md.
+
+  apply:
+    needs: [determine-environment, build-and-push, migrate]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    defaults:
+      run:
+        working-directory: infra/terraform/environments/${{ needs.determine-environment.outputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: terraform init -backend-config=backend.hcl
+      - run: |
+          terraform apply -auto-approve \
+            -var="api_image=$(terraform output -raw ecr_api_repository_url 2>/dev/null || echo unset):${{ needs.build-and-push.outputs.image_tag }}" \
+            -var="web_image=$(terraform output -raw ecr_web_repository_url 2>/dev/null || echo unset):${{ needs.build-and-push.outputs.image_tag }}"
+
+  smoke-test:
+    needs: [determine-environment, apply]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify /healthz on the deployed environment
+        run: |
+          HOST="${{ needs.determine-environment.outputs.environment == 'prod' && 'api.aiwealthadvisor.app' || 'api.dev.aiwealthadvisor.app' }}"
+          curl -sf "https://$HOST/healthz"

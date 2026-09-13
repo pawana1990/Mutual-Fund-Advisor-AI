@@ -1,0 +1,14 @@
+region      = "ap-south-1"
+domain_name = "dev.aiwealthadvisor.app"
+
+# Built and pushed by .github/workflows/deploy.yml — for a first manual
+# apply, push a placeholder tag yourself first (see docs/DEPLOYMENT_GUIDE.md).
+api_image = "<account-id>.dkr.ecr.ap-south-1.amazonaws.com/ai-wealth-advisor-dev-api:latest"
+web_image = "<account-id>.dkr.ecr.ap-south-1.amazonaws.com/ai-wealth-advisor-dev-web:latest"
+
+# Issue + validate in ACM (us-east-1 if fronted by CloudFront, else the
+# region above) before the first apply — Terraform does not auto-validate
+# DNS challenges for a domain it doesn't own the hosted zone for here.
+certificate_arn = "arn:aws:acm:ap-south-1:<account-id>:certificate/<cert-id>"
+
+alert_email = "oncall@example.com"

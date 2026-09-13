@@ -1,0 +1,9 @@
+region      = "ap-south-1"
+domain_name = "aiwealthadvisor.app"
+
+api_image = "<account-id>.dkr.ecr.ap-south-1.amazonaws.com/ai-wealth-advisor-prod-api:<git-sha-or-tag>"
+web_image = "<account-id>.dkr.ecr.ap-south-1.amazonaws.com/ai-wealth-advisor-prod-web:<git-sha-or-tag>"
+
+certificate_arn = "arn:aws:acm:ap-south-1:<account-id>:certificate/<cert-id>"
+
+alert_email = "oncall@example.com"
